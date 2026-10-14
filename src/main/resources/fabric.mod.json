@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "nerd_max_one_totem",
+  "version": "${version}",
+  "name": "Nerd Max One Totem",
+  "description": "Allows players to pick up a Totem of Undying only when they do not already carry one.",
+  "authors": [
+    "Nerd Minecraft"
+  ],
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "nl.nerdminecraft.maxtotem.MaxOneTotem"
+    ]
+  },
+  "mixins": [
+    "nerd_max_one_totem.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "26.3",
+    "java": ">=25"
+  }
+}
