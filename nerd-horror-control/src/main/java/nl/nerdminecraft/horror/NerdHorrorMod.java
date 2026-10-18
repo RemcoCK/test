@@ -16,7 +16,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
-import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.LightningBolt;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.phys.AABB;
@@ -217,7 +217,7 @@ public final class NerdHorrorMod implements ModInitializer {
             }
             case "thunder" -> {
                 // Real visual lightning entity, but no block fire or player damage.
-                LightningBolt bolt = new LightningBolt(EntityType.LIGHTNING_BOLT, player.level());
+                LightningBolt bolt = new LightningBolt(EntityTypes.LIGHTNING_BOLT, player.level());
                 bolt.setVisualOnly(true);
                 bolt.setPos(player.getX() + 3.0, player.getY(), player.getZ() + 2.0);
                 player.level().addFreshEntity(bolt);
@@ -280,7 +280,7 @@ public final class NerdHorrorMod implements ModInitializer {
         command(server, "execute in " + level.dimension().identifier() + " run summon minecraft:" + type + " " + pos + " " + nbt);
         Mob mob = level.getEntitiesOfClass(Mob.class,
             new AABB(x - 4, y - 3, z - 4, x + 4, y + 8, z + 4),
-            candidate -> candidate.getTags().contains(id)).stream().findFirst().orElse(null);
+            candidate -> candidate.entityTags().contains(id)).stream().findFirst().orElse(null);
         if (mob == null) {
             LOGGER.warn("Horror mob did not spawn: {} for {}", type, player.getName().getString());
             return;
