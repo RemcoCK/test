@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "nerdhorror",
+  "version": "${version}",
+  "name": "Nerd Horror Control",
+  "description": "Server-side horror pranks met /horror en OP toegang.",
+  "authors": ["Nerd Minecraft"],
+  "license": "MIT",
+  "environment": "server",
+  "entrypoints": {
+    "main": ["nl.nerdminecraft.horror.NerdHorrorMod"]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "minecraft": "~26.3",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}
