@@ -236,7 +236,7 @@ public final class NerdHorrorMod implements ModInitializer {
     private void spawnMonster(MinecraftServer server, ServerPlayer player, String type, String at) {
         String name = player.getName().getString();
         String id = "nh_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
-        String dimension = player.level().dimension().location().toString();
+        String dimension = player.level().dimension().identifier().toString();
         String nbt = "{Tags:[\"" + ROOT_TAG + "\",\"" + id + "\"]"
             + ((type.equals("creeper") || type.equals("skeleton")) ? ",NoAI:1b,Silent:1b,Invulnerable:1b" : "")
             + "}";
@@ -285,7 +285,7 @@ public final class NerdHorrorMod implements ModInitializer {
 
     private void removeAll(MinecraftServer server) {
         for (ServerLevel level : server.getAllLevels()) {
-            String dimension = level.dimension().location().toString();
+            String dimension = level.dimension().identifier().toString();
             killTag(server, dimension, ROOT_TAG);
         }
     }
