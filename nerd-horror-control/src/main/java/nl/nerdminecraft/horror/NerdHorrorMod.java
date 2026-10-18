@@ -16,6 +16,12 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LightningBolt;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.core.BlockPos;
+import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,13 +52,14 @@ public final class NerdHorrorMod implements ModInitializer {
     private final List<Pending> pending = new ArrayList<>();
     private final List<Spawned> spawned = new ArrayList<>();
     private long ticks = 0;
-    private int scale = 4;
+    private int scale = 7;
     private float damage = 1.0f; // 1 HP = half a heart in vanilla MC
-    private int duration = 12;
+    private int duration = 18;
     private final Path settingsPath = FabricLoader.getInstance().getConfigDir().resolve("nerd-horror.properties");
 
     private record Pending(long due, String command) {}
-    private record Spawned(long removeAt, String tag, String dimension) {}
+    // Direct entity references let us remove prank mobs WITHOUT /kill, drops or XP.
+    private record Spawned(long removeAt, Mob mob, UUID target, String type) {}
 
     @Override
     public void onInitialize() {
@@ -68,19 +75,21 @@ public final class NerdHorrorMod implements ModInitializer {
             for (String monster : MONSTERS) {
                 root.then(Commands.literal(monster)
                     .then(Commands.argument("speler", StringArgumentType.word())
+                        .suggests((ctx, builder) -> suggestPlayers(ctx, builder))
                         .executes(ctx -> trigger(ctx, monster))));
             }
             for (String effect : EFFECTS) {
                 root.then(Commands.literal(effect)
                     .then(Commands.argument("speler", StringArgumentType.word())
+                        .suggests((ctx, builder) -> suggestPlayers(ctx, builder))
                         .executes(ctx -> trigger(ctx, effect))));
             }
             root.then(Commands.literal("config")
                 .then(Commands.literal("size")
-                    .then(Commands.argument("waarde", IntegerArgumentType.integer(1, 8))
+                    .then(Commands.argument("waarde", IntegerArgumentType.integer(1, 12))
                         .executes(ctx -> configSize(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "waarde")))))
                 .then(Commands.literal("damage")
-                    .then(Commands.argument("waarde", FloatArgumentType.floatArg(0.0f, 4.0f))
+                    .then(Commands.argument("waarde", FloatArgumentType.floatArg(0.0f, 6.0f))
                         .executes(ctx -> configDamage(ctx.getSource(), FloatArgumentType.getFloat(ctx, "waarde")))))
                 .then(Commands.literal("duration")
                     .then(Commands.argument("seconden", IntegerArgumentType.integer(3, 60))
@@ -94,7 +103,7 @@ public final class NerdHorrorMod implements ModInitializer {
             // Remove spooky monsters before chunks are saved on shutdown.
             removeAll(server);
         });
-        LOGGER.info("Nerd Horror Control 1.0.0 loaded (server-side, /horror)");
+        LOGGER.info("Nerd Horror Control 1.1.0 loaded (server-side, /horror)");
     }
 
     private int help(CommandSourceStack source) {
@@ -134,9 +143,8 @@ public final class NerdHorrorMod implements ModInitializer {
 
     private int stop(CommandSourceStack source) {
         pending.clear();
-        removeAll(source.getServer());
         int removed = spawned.size();
-        spawned.clear();
+        removeAll(source.getServer());
         source.sendSuccess(() -> Component.literal("Alle lopende horroracties gestopt (" + removed + " monsters)."), false);
         return 1;
     }
@@ -163,9 +171,19 @@ public final class NerdHorrorMod implements ModInitializer {
         for (ServerPlayer player : targets) {
             perform(event, player, server);
         }
-        String summary = "Horror " + event + " gestart bij " + targets.size() + " speler(s).";
-        ctx.getSource().sendSuccess(() -> Component.literal(summary), true);
+        // Silent action: no success message to operator or broadcast to other OPs.
         return targets.size();
+    }
+
+    private java.util.concurrent.CompletableFuture<com.mojang.brigadier.suggestion.Suggestions> suggestPlayers(
+        CommandContext<CommandSourceStack> ctx,
+        com.mojang.brigadier.suggestion.SuggestionsBuilder builder
+    ) {
+        builder.suggest("all");
+        for (String name : ctx.getSource().getOnlinePlayerNames()) {
+            builder.suggest(name);
+        }
+        return builder.buildFuture();
     }
 
     private boolean isMonster(String event) {
@@ -182,18 +200,27 @@ public final class NerdHorrorMod implements ModInitializer {
         switch (event) {
             case "spider", "zombie", "skeleton", "creeper" -> spawnMonster(server, player, event, at);
             case "jumpscare" -> {
-                command(server, "title " + name + " times 0 35 10");
-                command(server, "title " + name + " title {text:\"KIJK ACHTER JE!\",color:\"dark_red\",bold:true}");
-                sound(server, at, "minecraft:entity.warden.roar", "0.8");
-                command(server, at + "effect give @s minecraft:darkness 3 0 true");
-                particle(server, at, "minecraft:smoke", 35);
+                // Two-stage scare: silence/darkness then a loud flash in the player's face.
+                command(server, "title " + name + " times 0 28 5");
+                command(server, at + "effect give @s minecraft:darkness 4 0 true");
+                command(server, "title " + name + " title {text:\"??????????\",color:\"dark_red\",obfuscated:true,bold:true}");
+                sound(server, at, "minecraft:entity.warden.heartbeat", "0.6");
+                later(16, "title " + name + " title {text:\"ACHTER JE!\",color:\"red\",bold:true}");
+                later(16, at + "playsound minecraft:entity.warden.sonic_boom master @s ~ ~ ~ 1.5 1.2");
+                later(16, at + "playsound minecraft:entity.enderman.scream master @s ~ ~ ~ 1.4 0.6");
+                later(16, at + "particle minecraft:sonic_boom ^ ^1 ^1 0 0 0 0 1 force @s");
+                later(29, "title " + name + " subtitle {text:\"Hij staat achter je...\",color:\"dark_gray\",italic:true}");
             }
             case "darkness" -> {
                 command(server, at + "effect give @s minecraft:darkness 8 0 true");
                 sound(server, at, "minecraft:ambient.cave", "1");
             }
             case "thunder" -> {
-                sound(server, at, "minecraft:entity.lightning_bolt.thunder", "1");
+                // Real visual lightning entity, but no block fire or player damage.
+                LightningBolt bolt = new LightningBolt(EntityType.LIGHTNING_BOLT, player.level());
+                bolt.setVisualOnly(true);
+                bolt.setPos(player.getX() + 3.0, player.getY(), player.getZ() + 2.0);
+                player.level().addFreshEntity(bolt);
                 particle(server, at, "minecraft:electric_spark", 45);
             }
             case "heartbeat" -> {
@@ -234,21 +261,61 @@ public final class NerdHorrorMod implements ModInitializer {
     }
 
     private void spawnMonster(MinecraftServer server, ServerPlayer player, String type, String at) {
-        String name = player.getName().getString();
         String id = "nh_" + UUID.randomUUID().toString().replace("-", "").substring(0, 16);
-        String dimension = player.level().dimension().identifier().toString();
+        ServerLevel level = player.level();
+        // Spawn 12-16 blocks away rather than directly inside/next to the target.
+        // Choose a patch of solid ground to avoid a mob appearing inside a hill.
+        double yaw = Math.toRadians(player.getYRot());
+        double distance = type.equals("spider") ? 16.0 : 13.0;
+        double x = player.getX() + Math.sin(yaw) * distance;
+        double z = player.getZ() - Math.cos(yaw) * distance;
+        double y = findGround(level, x, player.getY(), z);
         String nbt = "{Tags:[\"" + ROOT_TAG + "\",\"" + id + "\"]"
-            + ((type.equals("creeper") || type.equals("skeleton")) ? ",NoAI:1b,Silent:1b,Invulnerable:1b" : "")
+            + ",DeathLootTable:\"minecraft:empty\",PersistenceRequired:1b,CanPickUpLoot:0b"
+            + (type.equals("creeper") ? ",NoAI:1b,Silent:1b,Invulnerable:1b" : "")
+            + (type.equals("skeleton") ? ",Invulnerable:1b,Fire:-1s" : "")
             + "}";
-        // Spawn ahead of the player. No custom entity type, texture, or resource pack.
-        command(server, "execute as " + name + " at @s positioned ^ ^ ^4 run summon minecraft:" + type + " ~ ~ ~ " + nbt);
-        String selector = "@e[tag=" + id + ",limit=1,sort=nearest]";
-        command(server, at + "attribute " + selector + " minecraft:scale base set " + scale);
-        if (type.equals("spider") || type.equals("zombie")) {
-            command(server, at + "attribute " + selector + " minecraft:attack_damage base set " + damage);
+        // Use the actual target dimension, not the overworld command source.
+        String pos = String.format(Locale.ROOT, "%.2f %.2f %.2f", x, y, z);
+        command(server, "execute in " + level.dimension().identifier() + " run summon minecraft:" + type + " " + pos + " " + nbt);
+        Mob mob = level.getEntitiesOfClass(Mob.class,
+            new AABB(x - 4, y - 3, z - 4, x + 4, y + 8, z + 4),
+            candidate -> candidate.getTags().contains(id)).stream().findFirst().orElse(null);
+        if (mob == null) {
+            LOGGER.warn("Horror mob did not spawn: {} for {}", type, player.getName().getString());
+            return;
         }
-        sound(server, at, type.equals("spider") ? "minecraft:entity.spider.ambient" : "minecraft:entity.warden.roar", "0.8");
-        spawned.add(new Spawned(ticks + duration * 20L, id, dimension));
+        // Scaling the actual vanilla model is visible without client-side mods.
+        command(server, "execute in " + level.dimension().identifier()
+            + " run attribute @e[tag=" + id + ",limit=1] minecraft:scale base set " + scale);
+        if (type.equals("spider") || type.equals("zombie")) {
+            command(server, "execute in " + level.dimension().identifier()
+                + " run attribute @e[tag=" + id + ",limit=1] minecraft:attack_damage base set " + damage);
+        }
+        if (type.equals("skeleton")) {
+            // Fire resistance + invulnerability protects against sunlight.
+            command(server, "execute in " + level.dimension().identifier()
+                + " run effect give @e[tag=" + id + ",limit=1] minecraft:fire_resistance 120 0 true");
+        }
+        if (!type.equals("creeper")) {
+            mob.setTarget(player);
+            mob.getNavigation().moveTo(player, type.equals("spider") ? 1.85 : 1.45);
+        }
+        sound(server, at, type.equals("spider") ? "minecraft:entity.spider.ambient" : "minecraft:entity.warden.roar", "0.65");
+        spawned.add(new Spawned(ticks + duration * 20L, mob, player.getUUID(), type));
+    }
+
+    private double findGround(ServerLevel level, double x, double playerY, double z) {
+        // Search close to the player's elevation; not designed for enclosed caves.
+        for (int offset = 4; offset >= -12; offset--) {
+            BlockPos pos = BlockPos.containing(x, playerY + offset, z);
+            if (level.getBlockState(pos.below()).isSolid()
+                && level.getBlockState(pos).isAir()
+                && level.getBlockState(pos.above()).isAir()) {
+                return pos.getY();
+            }
+        }
+        return playerY;
     }
 
     private void sound(MinecraftServer server, String at, String sound, String pitch) {
@@ -275,28 +342,63 @@ public final class NerdHorrorMod implements ModInitializer {
         }
         Iterator<Spawned> mobs = spawned.iterator();
         while (mobs.hasNext()) {
-            Spawned mob = mobs.next();
-            if (mob.removeAt() <= ticks) {
-                killTag(server, mob.dimension(), mob.tag());
+            Spawned entry = mobs.next();
+            Mob mob = entry.mob();
+            if (mob.isRemoved()) {
                 mobs.remove();
+                continue;
+            }
+            if (entry.removeAt() <= ticks) {
+                mob.discard();  // /kill would create loot, XP and chat spam.
+                mobs.remove();
+                continue;
+            }
+            ServerPlayer target = server.getPlayerList().getPlayer(entry.target());
+            if (target == null || !target.isAlive() || target.level() != mob.level()) {
+                mob.discard();
+                mobs.remove();
+                continue;
+            }
+            if (entry.type().equals("creeper")) {
+                // A controlled, non-exploding giant creeper that rushes the player.
+                // NoAI means it can NEVER explode and damage builds/claims.
+                if (ticks % 2 == 0) {
+                    double dx = target.getX() - mob.getX();
+                    double dz = target.getZ() - mob.getZ();
+                    double len = Math.sqrt(dx * dx + dz * dz);
+                    if (len > 3.0) {
+                        double speed = 0.52;
+                        mob.setPos(mob.getX() + dx / len * speed, mob.getY(), mob.getZ() + dz / len * speed);
+                        mob.setYRot((float) Math.toDegrees(Math.atan2(-dx, dz)));
+                    } else {
+                        String name = target.getName().getString();
+                        String at = "execute as " + name + " at @s run ";
+                        sound(server, at, "minecraft:entity.creeper.primed", "0.65");
+                        later(12, at + "playsound minecraft:entity.generic.explode master @s ~ ~ ~ 1 1");
+                        later(12, at + "particle minecraft:explosion_emitter ~ ~1 ~ 0 0 0 0 1 force @s");
+                        mob.discard();
+                        mobs.remove();
+                    }
+                }
+            } else if (ticks % 20 == 0) {
+                // Vanilla AI may pick another mob/player: keep pursuing the named target.
+                mob.setTarget(target);
+                mob.getNavigation().moveTo(target, entry.type().equals("spider") ? 1.85 : 1.45);
             }
         }
     }
 
     private void removeAll(MinecraftServer server) {
-        for (ServerLevel level : server.getAllLevels()) {
-            String dimension = level.dimension().identifier().toString();
-            killTag(server, dimension, ROOT_TAG);
+        for (Spawned entry : spawned) {
+            if (!entry.mob().isRemoved()) entry.mob().discard();
         }
-    }
-
-    private void killTag(MinecraftServer server, String dimension, String tag) {
-        command(server, "execute in " + dimension + " run kill @e[tag=" + tag + "]");
+        spawned.clear();
     }
 
     private void command(MinecraftServer server, String command) {
         try {
-            server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), command);
+            server.getCommands().performPrefixedCommand(
+                server.createCommandSourceStack().withSuppressedOutput(), command);
         } catch (RuntimeException ex) {
             LOGGER.error("Horror-action command failed: {}", command, ex);
         }
@@ -307,9 +409,9 @@ public final class NerdHorrorMod implements ModInitializer {
         Properties p = new Properties();
         try (InputStream in = Files.newInputStream(settingsPath)) {
             p.load(in);
-            scale = Math.clamp(Integer.parseInt(p.getProperty("size", "4")), 1, 8);
-            damage = Math.clamp(Float.parseFloat(p.getProperty("damage", "1")), 0.0f, 4.0f);
-            duration = Math.clamp(Integer.parseInt(p.getProperty("duration", "12")), 3, 60);
+            scale = Math.clamp(Integer.parseInt(p.getProperty("size", "7")), 1, 12);
+            damage = Math.clamp(Float.parseFloat(p.getProperty("damage", "1")), 0.0f, 6.0f);
+            duration = Math.clamp(Integer.parseInt(p.getProperty("duration", "18")), 3, 60);
         } catch (IOException | NumberFormatException ex) {
             LOGGER.warn("Could not load nerd-horror.properties; using safe defaults", ex);
         }
